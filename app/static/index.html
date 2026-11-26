@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DWG/DXF → GPKG — Yuk Generate PBT</title>
+<title>Ubah DWG/DXF jadi File Peta — Yuk Generate PBT</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
   h1 { font-size: 1.4rem; } label { display: block; margin: .6rem 0 .2rem; font-weight: 600; }
@@ -12,85 +12,104 @@
   button { margin-top: 1rem; padding: .6rem 1.2rem; cursor: pointer; }
   pre { background: #f4f4f4; padding: .8rem; overflow: auto; white-space: pre-wrap; }
   #status { margin-top: 1rem; }
+  small { display: block; font-weight: 400; color: #555; margin-top: .15rem; }
+  ol { margin: .5rem 0; }
 </style>
 </head>
 <body>
-<h1>DWG / DXF → GPKG</h1>
-<p>Konverter untuk plugin <b>Yuk Generate PBT</b>. Unggah gambar ukur (DWG/DXF),
-petakan field-nya, unduh GPKG siap pakai (layer <code>PBT_&lt;nomor&gt;</code>,
-MULTIPOLYGON, EPSG:23834).</p>
+<h1>Ubah Gambar Ukur jadi File Peta</h1>
+<p>Ubah file gambar ukur (DWG atau DXF) jadi file peta (GPKG) yang bisa
+langsung dipakai plugin <b>Yuk Generate PBT</b>.</p>
+
+<p><b>Cara pakai:</b></p>
+<ol>
+  <li>Pilih file gambar ukur (DWG atau DXF).</li>
+  <li>Kalau mau, klik "Lihat isi file" untuk memeriksa lapisan di dalamnya.</li>
+  <li>Klik "Ubah &amp; unduh" — file peta langsung terunduh.</li>
+</ol>
 
 <form id="f">
-  <label>File DWG / DXF (maks 32 MB)
+  <label>File gambar ukur (DWG atau DXF, maks 32 MB)
     <input type="file" id="file" name="file" accept=".dwg,.dxf" required>
   </label>
-  <button type="button" id="probeBtn">1. Periksa isi file (probe)</button>
-  <pre id="probeOut">Belum ada file diperiksa.</pre>
+  <button type="button" id="probeBtn">1. Lihat isi file dulu</button>
+  <pre id="probeOut">Belum ada file yang dilihat.</pre>
 
-  <label>Layer sumber (parcels)
-    <input type="text" id="source_layer" value="entities">
-  </label>
-  <label>Mode konversi
+  <label>Jenis file yang diunggah
     <select id="mode">
-      <option value="surveyor" selected>Surveyor — jaringan garis + label (file ukur asli)</option>
-      <option value="generic">Umum — poligon tertutup + 1 layer label</option>
+      <option value="surveyor" selected>File ukur biasa — batas persil berupa garis, ada tulisan NIB dan nama</option>
+      <option value="generic">File poligon — batas persil sudah tertutup</option>
     </select>
   </label>
+  <label>Nama lapisan di dalam file
+    <input type="text" id="source_layer" value="entities">
+    <small>Semua gambar di file DXF tersimpan di lapisan bernama "entities". Biarkan saja, kecuali kamu tahu pasti.</small>
+  </label>
   <div class="row">
     <div>
-      <label>Layer persil (mode surveyor)
+      <label>Lapisan garis batas persil
         <input type="text" id="parcel_layer" value="020100">
+        <small>Kode lapisan garis batas persil di file ukurmu. Biasanya 020100.</small>
       </label>
     </div>
     <div>
-      <label>Layer SHM (mode surveyor)
+      <label>Lapisan persil SHM
         <input type="text" id="shm_layer" value="lb_lai">
+        <small>Kode lapisan persil yang sudah bersertifikat. Biasanya lb_lai.</small>
       </label>
     </div>
   </div>
   <div class="row">
     <div>
-      <label>Nama layer target
+      <label>Nama lapisan di file hasil
         <input type="text" id="target_layer" value="PBT_2091">
+        <small>Nama lapisan di file peta hasil, contoh: PBT_1.</small>
       </label>
     </div>
     <div>
-      <label>EPSG target
+      <label>Zona koordinat
         <input type="number" id="target_epsg" value="23834">
+        <small>23834 = TM-3 zona 48.2 (Cianjur dan sekitarnya). Biarkan saja kalau lokasimu di zona ini.</small>
       </label>
     </div>
   </div>
   <div class="row">
     <div>
-      <label>PBT (nomor)
+      <label>Nomor PBT
         <input type="text" id="pbt" value="2091">
+        <small>Nomor PBT yang ditulis di file hasil.</small>
       </label>
     </div>
     <div>
-      <label>PBTK
+      <label>Nomor PBTK
         <input type="text" id="pbtk" value="2091">
+        <small>Nomor yang tampil di bingkai PBT.</small>
       </label>
     </div>
   </div>
-  <label>TGLK
+  <label>Tanggal
     <input type="text" id="tglk" value="06 November 2026">
+    <small>Tanggal yang tampil di bingkai PBT.</small>
   </label>
-  <label>Pemetaan field (JSON: field target → kolom sumber; kosong = NULL)
+  <label>Atur kolom (hanya mode poligon)
     <textarea id="field_map" rows="4">{}</textarea>
+    <small>Biarkan {} — hanya dipakai kalau filemu jenis poligon. Format JSON, diisi ahli saja.</small>
   </label>
   <div class="row">
     <div>
-      <label>Layer label teks (opsional, untuk NIB) — nama layer DXF berisi TEXT
+      <label>Lapisan tulisan NIB (hanya mode poligon)
         <input type="text" id="label_layer" value="" placeholder="cth: NIB">
+        <small>Nama lapisan yang berisi tulisan NIB.</small>
       </label>
     </div>
     <div>
-      <label>Kolom teks label
+      <label>Kolom isi tulisan
         <input type="text" id="label_field" value="Text">
+        <small>Biasanya "Text". Biarkan saja.</small>
       </label>
     </div>
   </div>
-  <button type="button" id="convBtn">2. Convert &amp; unduh GPKG</button>
+  <button type="button" id="convBtn">2. Ubah &amp; unduh file peta</button>
 </form>
 <div id="status"></div>
 
@@ -102,11 +121,11 @@ $('probeBtn').onclick = async () => {
   const f = $('file').files[0];
   if (!f) { status.textContent = 'Pilih file dulu.'; return; }
   const fd = new FormData(); fd.append('file', f);
-  status.textContent = 'Memeriksa file…';
+  status.textContent = 'Melihat isi file…';
   const r = await fetch('/probe', { method: 'POST', body: fd });
   const j = await r.json();
   $('probeOut').textContent = JSON.stringify(j, null, 2);
-  status.textContent = r.ok ? 'Probe OK.' : ('Probe gagal: ' + (j.detail || r.status));
+  status.textContent = r.ok ? 'Isi file sudah terlihat.' : ('Gagal melihat isi file: ' + (j.detail || r.status));
 };
 
 $('convBtn').onclick = async () => {
@@ -116,11 +135,11 @@ $('convBtn').onclick = async () => {
   fd.append('file', f);
   for (const k of ['source_layer','target_layer','target_epsg','field_map','pbt','pbtk','tglk','label_layer','label_field','mode','parcel_layer','shm_layer'])
     fd.append(k, $(k).value);
-  status.textContent = 'Mengonversi…';
+  status.textContent = 'Mengubah file…';
   const r = await fetch('/convert', { method: 'POST', body: fd });
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
-    status.textContent = 'Convert gagal: ' + (j.detail || r.status);
+    status.textContent = 'Gagal mengubah: ' + (j.detail || r.status);
     return;
   }
   const blob = await r.blob();
@@ -128,7 +147,7 @@ $('convBtn').onclick = async () => {
   a.href = URL.createObjectURL(blob);
   a.download = $('target_layer').value + '.gpkg';
   a.click();
-  status.textContent = 'GPKG diunduh.';
+  status.textContent = 'File peta sudah diunduh.';
 };
 </script>
 </body>
