@@ -17,10 +17,18 @@ Pipeline (verified on Tes Convert.dxf, 2026-11-26: 24/24 parcels):
      into parcels with ST_Within semantics (ogr Within).
   4. Divider lines (jalan/gang/sungai/selokan) stay OPEN LINES in a
      second `dividers` layer — they must never be closed (Derana).
+  5. ALL textual content becomes attributes (Derana, 2026-11-26):
+     every TEXT layer is captured — the known ones into fixed fields
+     (NIB/NAMA/LUAS/SU/Nomor Hak), any other TEXT layer into a field
+     named after the layer (or into a matching schema field, e.g. a
+     layer "A" feeds field A = NIK). TEXTs falling outside every parcel
+     are preserved in a `labels` POINT layer (Layer + Text) so nothing
+     is ever dropped.
 Prints a JSON summary to stdout on success; exits non-zero on failure.
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -63,6 +71,11 @@ def _as_polygon(geom):
     if geom.GetGeometryName() == "MULTIPOLYGON" and geom.GetGeometryCount() > 0:
         return geom.GetGeometryRef(0).Clone()
     return geom.Clone()
+
+
+def _field_name(layer: str) -> str:
+    """Sanitize a DXF layer name into a GPKG field name."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", layer)
 
 
 def _close_ring_to_polygon(line):
@@ -151,6 +164,25 @@ def main() -> int:
     def _labels_within(poly, layer_name: str) -> list:
         return [t for (t, g) in labels.get(layer_name, []) if g.Within(poly)]
 
+    # Dynamic fields: every TEXT layer not covered by the fixed mapping
+    # becomes an attribute. If its name matches a schema field (e.g. a
+    # layer "A" carrying NIK texts), it feeds that field; otherwise the
+    # field is named after the layer. Nothing textual is dropped.
+    # NOTE: GPKG/SQLite column names are case-insensitive, so "ket" and
+    # "KET" are the same column — match case-insensitively, or the
+    # CREATE TABLE fails with "duplicate column name" (caught 2026-11-26).
+    known_layers = set(SURVEYOR_LABELS.values())
+    schema_by_upper = {name.upper(): name for name in TARGET_FIELDS}
+    dynamic_fields: dict[str, str] = {}  # field name -> TEXT layer name
+    for lyr_name in labels:
+        if lyr_name in known_layers:
+            continue
+        fname = _field_name(lyr_name)
+        if fname.upper() in schema_by_upper:
+            fname = schema_by_upper[fname.upper()]
+        if fname not in dynamic_fields:
+            dynamic_fields[fname] = lyr_name
+
     # 3. Write the plugin-schema GPKG.
     if out_path.exists():
         out_path.unlink()
@@ -159,6 +191,9 @@ def main() -> int:
     olyr = ods.CreateLayer(target_layer, srs, ogr.wkbMultiPolygon)
     for name in TARGET_FIELDS:
         olyr.CreateField(ogr.FieldDefn(name, ogr.OFTString))
+    for name in dynamic_fields:
+        if name not in TARGET_FIELDS:
+            olyr.CreateField(ogr.FieldDefn(name, ogr.OFTString))
 
     def _add_parcel(poly):
         mp = ogr.Geometry(ogr.wkbMultiPolygon)
@@ -176,6 +211,10 @@ def main() -> int:
         f.SetField("M2", str(int(round(area))))
         f.SetField("080202", found["080202"])
         f.SetField("080203", found["080203"])
+        for fname, lyr_name in dynamic_fields.items():
+            hits = _labels_within(poly, lyr_name)
+            if hits:
+                f.SetField(fname, "; ".join(hits))
         for key in ("PBT", "PBTK", "TGLK"):
             if key in literals:
                 f.SetField(key, literals[key])
@@ -195,12 +234,32 @@ def main() -> int:
         f.SetField("KET", CODE_KET.get(layer))
         f.SetField("Layer", layer)
         dlyr.CreateFeature(f)
+
+    # TEXTs falling outside every parcel are preserved here (Layer + Text)
+    # so no textual content is ever dropped.
+    all_parcels = faces + shm_polys
+    llyr = ods.CreateLayer("labels", srs, ogr.wkbPoint)
+    llyr.CreateField(ogr.FieldDefn("Layer", ogr.OFTString))
+    llyr.CreateField(ogr.FieldDefn("Text", ogr.OFTString))
+    unjoined = 0
+    for lyr_name, items in labels.items():
+        for text, geom in items:
+            if not any(geom.Within(p) for p in all_parcels):
+                f = ogr.Feature(llyr.GetLayerDefn())
+                f.SetGeometry(geom.Clone())
+                f.SetField("Layer", lyr_name)
+                f.SetField("Text", text)
+                llyr.CreateFeature(f)
+                unjoined += 1
     ods = None
     print(json.dumps({
         "parcels": len(faces) + len(shm_polys),
         "faces": len(faces),
         "shm": len(shm_polys),
         "dividers": len(div_lines),
+        "text_layers": {k: len(v) for k, v in labels.items()},
+        "dynamic_fields": sorted(dynamic_fields),
+        "unjoined_texts": unjoined,
         "output": str(out_path),
     }))
     return 0

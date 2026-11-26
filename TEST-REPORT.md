@@ -309,3 +309,19 @@ proved the generic pipeline insufficient and shaped v0.2.0:
   geometry, 24 NIB, 3 SU, 3 `080203`, 27 dividers — identical to the
   one-off proof script. Generic-mode regression on
   `PBT_mini_surveyor.dxf` still 6 parcels / 5 NIB; `/probe` 200.
+- **All-text rule (Derana, 2026-11-26 ~16:09 WIB): "semua tekstual
+  wajib ada di PBT dan semuanya masuk atribut".** Implementation
+  (v0.2.1): every TEXT layer is captured — known ones into fixed
+  fields (NIB/NAMA/LUAS/SU/Nomor Hak), any other TEXT layer into a
+  field named after the layer (or into a matching schema field, e.g. a
+  layer "A" feeds field A = NIK). TEXTs outside every parcel go to a
+  `labels` POINT layer (Layer + Text) so nothing is ever dropped.
+  Proven on synthetic `testdata/tes_teks_lain.dxf`: 1 parcel gets
+  NIB 00999 + field A 3203121501900002 + field "nik"
+  3203121501900001; stray text "catatan pinggir" lands in `labels`.
+  Tes Convert regression: 24 parcels, all 5 text layers joined,
+  0 unjoined. Bug caught by the test: GPKG column names are
+  case-insensitive ("ket" vs "KET" = duplicate column) — dynamic
+  fields now match schema fields case-insensitively. Note: Tes
+  Convert.dxf has NO NIK texts, so field A is empty there; the NIK
+  layer name in Derana's files is still unknown — ask him.
