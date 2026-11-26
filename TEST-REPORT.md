@@ -354,3 +354,13 @@ proved the generic pipeline insufficient and shaped v0.2.0:
   service resolves the picked name to EPSG server-side. Live test:
   crs=tm3-48.2 → output SRS EPSG:23834; crs=utm-48s → EPSG:32748;
   crs=wgs84 → EPSG:4326; unknown crs → HTTP 400.
+- **Output name (Derana, 2026-11-26 ~16:25 WIB): "No PBT ganti
+  menjadi Nama File untuk GPKG. Hapus no PBTK, tidak perlu. Hapus
+  tanggal, tidak perlu karena nanti bisa di set lewat plugin kita".**
+  v0.3.3: the form asks only file, coordinate system, and "Nama file
+  untuk GPKG" (`filename`, default `PBT_2091`) — PBTK and TGLK inputs
+  removed; the service sends no PBT/PBTK/TGLK literals, so those
+  schema fields stay NULL until the plugin sets them. The typed name
+  becomes both the GPKG layer name and the download filename. Live
+  test: `POST /convert` filename=PBT_TES → HTTP 200, layer `PBT_TES`,
+  24 parcels, 24 NIB, PBT/PBTK/TGLK NULL.

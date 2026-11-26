@@ -22,9 +22,12 @@ di dalam event loop uvicorn, jadi pekerjaan native-nya hidup di proses
 terpisah).
 
 Form di halaman hanya menanyakan yang berubah tiap pekerjaan: file,
-sistem koordinat, nomor PBT, nomor PBTK, tanggal. Sisanya pakai nilai
-tetap (lapisan asal `entities`, batas persil `020100`, SHM `lb_lai`)
-dan nama lapisan hasil mengikuti nomor PBT (`PBT_<nomor>`).
+sistem koordinat, nama file untuk GPKG. Sisanya pakai nilai tetap
+(lapisan asal `entities`, batas persil `020100`, SHM `lb_lai`).
+Nomor PBTK dan tanggal TIDAK ditanya — diisi nanti lewat plugin
+(Derana, 2026-11-26), jadi field PBT / PBTK / TGLK di file hasil
+kosong sampai diisi di sana. Nama file yang diketik jadi nama lapisan
+di dalam GPKG sekaligus nama file unduhan.
 
 Sistem koordinat dipilih pakai nama, bukan kode EPSG (Derana,
 2026-11-26): TM-3 zona 46.2–54.1 (DGN95, 16 zona), UTM zona 46–54

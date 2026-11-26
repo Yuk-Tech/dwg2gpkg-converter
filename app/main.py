@@ -37,7 +37,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from starlette.background import BackgroundTask
 
-app = FastAPI(title="dwg2gpkg-converter", version="0.3.2")
+app = FastAPI(title="dwg2gpkg-converter", version="0.3.3")
 
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB (Cloud Run HTTP/1 request limit)
 
@@ -240,9 +240,7 @@ async def convert(
     source_layer: str = Form("entities"),
     target_layer: str = Form(""),
     crs: str = Form(DEFAULT_CRS),
-    pbt: str = Form(""),
-    pbtk: str = Form(""),
-    tglk: str = Form(""),
+    filename: str = Form("PBT_2091"),
     parcel_layer: str = Form("020100"),
     shm_layer: str = Form("lb_lai"),
 ) -> FileResponse:
@@ -251,10 +249,12 @@ async def convert(
     One mode only (Derana, 2026-11-26): the proven surveyor path —
     polygonise the parcel line network + join all TEXT labels + SHM +
     open-line dividers (see surveyor_convert.py). The form only asks
-    for what varies per job (file, coordinate system, PBT, PBTK, date);
-    everything else has a fixed default (Derana, 2026-11-26: fields
-    that don't need filling were removed from the form). The output
-    layer is named after the PBT number: PBT_<pbt>.
+    for what varies per job (file, coordinate system, output file
+    name); everything else has a fixed default (Derana, 2026-11-26:
+    fields that don't need filling were removed from the form).
+    PBTK and date are NOT asked — the plugin sets them later (Derana,
+    2026-11-26). The output layer and the downloaded file are named
+    after `filename`.
     """
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in (".dwg", ".dxf"):
@@ -262,16 +262,12 @@ async def convert(
     if crs not in CRS_OPTIONS:
         raise HTTPException(status_code=400, detail=f"unknown coordinate system: {crs!r}")
     target_epsg = CRS_OPTIONS[crs][2]
-
-    literals: dict[str, str] = {}
-    if pbt:
-        literals["PBT"] = pbt
-    if pbtk:
-        literals["PBTK"] = pbtk
-    if tglk:
-        literals["TGLK"] = tglk
     if not target_layer:
-        target_layer = f"PBT_{pbt}" if pbt else "PBT_2091"
+        target_layer = filename or "PBT_2091"
+
+    # No literals from the form: PBT / PBTK / TGLK are set later in the
+    # plugin (Derana, 2026-11-26), so the schema fields stay NULL here.
+    literals: dict[str, str] = {}
 
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:

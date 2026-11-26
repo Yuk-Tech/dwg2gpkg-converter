@@ -24,7 +24,7 @@ langsung dipakai plugin <b>Yuk Generate PBT</b>.</p>
 <p><b>Cara pakai:</b></p>
 <ol>
   <li>Pilih file gambar ukur (DWG atau DXF).</li>
-  <li>Pilih sistem koordinatnya (biasanya TM-3 zona 48.2), lalu isi nomor PBT, nomor PBTK, dan tanggal.</li>
+  <li>Pilih sistem koordinatnya (biasanya TM-3 zona 48.2), lalu isi nama file untuk GPKG.</li>
   <li>Klik "Ubah &amp; unduh" — file peta langsung terunduh.</li>
 </ol>
 <p>Kalau mau memeriksa lapisan di dalam file dulu, klik "Lihat isi file".</p>
@@ -43,23 +43,9 @@ langsung dipakai plugin <b>Yuk Generate PBT</b>.</p>
     <small>Sistem koordinat yang dipakai file gambar ukurmu. Kalau lokasimu di Cianjur dan sekitarnya, pilih TM-3 zona 48.2.</small>
   </label>
 
-  <div class="row">
-    <div>
-      <label>Nomor PBT
-        <input type="text" id="pbt" value="2091">
-        <small>Nomor PBT yang ditulis di file hasil.</small>
-      </label>
-    </div>
-    <div>
-      <label>Nomor PBTK
-        <input type="text" id="pbtk" value="2091">
-        <small>Nomor yang tampil di bingkai PBT.</small>
-      </label>
-    </div>
-  </div>
-  <label>Tanggal
-    <input type="text" id="tglk" value="06 November 2026">
-    <small>Tanggal yang tampil di bingkai PBT.</small>
+  <label>Nama file untuk GPKG
+    <input type="text" id="filename" value="PBT_2091">
+    <small>Nama file dan nama lapisan di dalam file peta hasil, contoh: PBT_2091.</small>
   </label>
   <button type="button" id="convBtn">Ubah &amp; unduh file peta</button>
 </form>
@@ -103,7 +89,7 @@ $('convBtn').onclick = async () => {
   if (!f) { status.textContent = 'Pilih file dulu.'; return; }
   const fd = new FormData();
   fd.append('file', f);
-  for (const k of ['crs','pbt','pbtk','tglk'])
+  for (const k of ['crs','filename'])
     fd.append(k, $(k).value);
   status.textContent = 'Mengubah file…';
   const r = await fetch('/convert', { method: 'POST', body: fd });
@@ -115,7 +101,7 @@ $('convBtn').onclick = async () => {
   const blob = await r.blob();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'PBT_' + ($('pbt').value || '2091') + '.gpkg';
+  a.download = ($('filename').value || 'PBT_2091') + '.gpkg';
   a.click();
   status.textContent = 'File peta sudah diunduh.';
 };
