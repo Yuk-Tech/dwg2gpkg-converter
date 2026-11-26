@@ -9,8 +9,17 @@ Usage:
       PARCEL_LAYER SHM_LAYER LITERALS_JSON OUT_GPKG
 
 Pipeline (verified on Tes Convert.dxf, 2026-11-26: 24/24 parcels):
-  1. Polygonise the parcel layer's line network with
-     ST_BuildArea(ST_Collect(...)) (ogr2ogr, -explodecollections).
+  1. Polygonise the parcel layer. Two drawing styles exist and both
+     are handled: (a) parcels drawn as their own CLOSED rings — each
+     ring becomes its polygon directly; (b) parcels drawn as an OPEN
+     shared-edge network — the open lines are polygonised together
+     with ST_BuildArea(ST_Collect(...)) on a memory layer. Style (a)
+     MUST NOT go through BuildArea: shared edges are traced twice
+     (once per adjacent parcel's ring), and BuildArea silently drops
+     faces from such duplicated linework (proven 2026-11-26 on
+     "tes convert.dxf": 21 rings -> 17 faces, parcels
+     01505/01537/01547/01559 lost, 39 of 120 segments drawn 2x).
+     Rings are built directly; only open lines go to BuildArea.
   2. SHM polygons: closed-flag LWPOLYLINEs arrive as LINESTRING from
      GDAL's DXF driver -> rings closed by hand.
   3. TEXT label points (NIB / NAMA / LUAS / SU / Nomor Hak) joined
@@ -29,7 +38,6 @@ Prints a JSON summary to stdout on success; exits non-zero on failure.
 
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -79,15 +87,56 @@ def _field_name(layer: str) -> str:
 
 
 def _close_ring_to_polygon(line):
-    """Close an open LINESTRING ring (append first vertex) -> POLYGON."""
+    """LINESTRING ring -> POLYGON. Appends the first vertex only when
+    the ring is not already closed (DXF closed-flag polylines store no
+    repeated first point; geometrically closed rings do)."""
     ring = ogr.Geometry(ogr.wkbLinearRing)
     n = line.GetPointCount()
     for i in range(n):
         ring.AddPoint_2D(*line.GetPoint_2D(i))
-    ring.AddPoint_2D(*line.GetPoint_2D(0))
+    if line.GetPoint_2D(0) != line.GetPoint_2D(n - 1):
+        ring.AddPoint_2D(*line.GetPoint_2D(0))
     poly = ogr.Geometry(ogr.wkbPolygon)
     poly.AddGeometry(ring)
     return poly
+
+
+def _is_closed_ring(line) -> bool:
+    """True when a LINESTRING is a geometrically closed ring."""
+    n = line.GetPointCount()
+    return n >= 4 and line.GetPoint_2D(0) == line.GetPoint_2D(n - 1)
+
+
+def _buildarea_faces(open_lines):
+    """Polygonise open linework with ST_BuildArea on a memory layer.
+
+    Returns a list of POLYGONs (cloned). Same SQL as the old ogr2ogr
+    step, but the input is filtered to open lines only.
+    """
+    mem = ogr.GetDriverByName("Memory").CreateDataSource("")
+    ml = mem.CreateLayer("open", None, ogr.wkbLineString)
+    for line in open_lines:
+        feat = ogr.Feature(ml.GetLayerDefn())
+        feat.SetGeometry(line.Clone())
+        ml.CreateFeature(feat)
+    res = mem.ExecuteSQL(
+        "SELECT ST_BuildArea(ST_Collect(geometry)) AS geometry FROM open",
+        dialect="SQLITE",
+    )
+    faces = []
+    if res is not None:
+        for feat in res:
+            g = feat.GetGeometryRef()
+            if g is None or g.IsEmpty():
+                continue
+            if g.GetGeometryName() == "MULTIPOLYGON":
+                for i in range(g.GetGeometryCount()):
+                    faces.append(_as_polygon(g.GetGeometryRef(i)))
+            else:
+                faces.append(_as_polygon(g))
+        mem.ReleaseResultSet(res)
+    mem = None
+    return faces
 
 
 def main() -> int:
@@ -97,42 +146,13 @@ def main() -> int:
     literals = json.loads(literals_json or "{}")
     dxf_path = Path(dxf_path)
     out_path = Path(out_path)
-    workdir = out_path.parent
     srs = osr.SpatialReference()
     srs.ImportFromEPSG(epsg)
 
-    # 1. Polygonise the parcel network.
-    faces_path = workdir / "faces.gpkg"
-    res = subprocess.run(
-        [
-            "ogr2ogr", "-f", "GPKG", str(faces_path), str(dxf_path),
-            "-nln", "faces", "-nlt", "MULTIPOLYGON", "-explodecollections",
-            "-s_srs", f"EPSG:{epsg}", "-t_srs", f"EPSG:{epsg}",
-            "-dialect", "SQLITE", "-skipfailures", "-sql",
-            "SELECT ST_BuildArea(ST_Collect(geometry)) AS geometry "
-            f"FROM \"{source_layer}\" WHERE Layer = '{parcel_layer}'",
-        ],
-        capture_output=True, text=True, timeout=300,
-    )
-    if res.returncode != 0 or not faces_path.exists():
-        print(f"polygonise failed: {(res.stderr or res.stdout).strip()[:500]}",
-              file=sys.stderr)
-        return 1
-    faces = []
-    fds = ogr.Open(str(faces_path))
-    if fds is not None:
-        flyr = fds.GetLayer("faces")
-        for feat in flyr:
-            g = feat.GetGeometryRef()
-            if g is not None and not g.IsEmpty():
-                faces.append(_as_polygon(g.Clone()))
-    fds = None
-    if not faces:
-        print(f"no closed faces found in parcel layer {parcel_layer!r}",
-              file=sys.stderr)
-        return 1
-
-    # 2. SHM polygons, divider lines, label points from the DXF.
+    # 1+2. Read the DXF once: parcel lines, SHM polygons, divider
+    # lines, label points.
+    parcel_lines: list = []
+    parcel_polys: list = []
     shm_polys: list = []
     div_lines: list = []
     labels: dict = {}
@@ -147,7 +167,19 @@ def main() -> int:
         if geom is None or layer is None:
             continue
         gt = geom.GetGeometryName()
-        if layer == shm_layer:
+        if layer == parcel_layer:
+            if gt in ("POLYGON", "MULTIPOLYGON"):
+                if gt == "MULTIPOLYGON":
+                    for i in range(geom.GetGeometryCount()):
+                        parcel_polys.append(_as_polygon(geom.GetGeometryRef(i)))
+                else:
+                    parcel_polys.append(_as_polygon(geom.Clone()))
+            elif gt == "MULTILINESTRING":
+                for i in range(geom.GetGeometryCount()):
+                    parcel_lines.append(geom.GetGeometryRef(i).Clone())
+            elif gt == "LINESTRING":
+                parcel_lines.append(geom.Clone())
+        elif layer == shm_layer:
             if gt in ("POLYGON", "MULTIPOLYGON"):
                 shm_polys.append(_as_polygon(geom.Clone()))
             elif gt == "LINESTRING":
@@ -160,6 +192,29 @@ def main() -> int:
         elif gt.startswith("POINT"):
             labels.setdefault(layer, []).append((feat.GetField("Text"), geom.Clone()))
     ds = None
+
+    # Polygonise the parcel lines: closed rings become polygons
+    # directly; only open lines go through ST_BuildArea (see step 1
+    # in the module docstring — BuildArea drops faces when shared
+    # edges are traced twice). An invalid ring falls back to the
+    # open-lines pool so BuildArea may still salvage it.
+    faces: list = list(parcel_polys)
+    open_lines: list = []
+    for line in parcel_lines:
+        if _is_closed_ring(line):
+            poly = _close_ring_to_polygon(line)
+            if poly.IsValid() and not poly.IsEmpty():
+                faces.append(poly)
+            else:
+                open_lines.append(line)
+        else:
+            open_lines.append(line)
+    if open_lines:
+        faces.extend(_buildarea_faces(open_lines))
+    if not faces:
+        print(f"no closed faces found in parcel layer {parcel_layer!r}",
+              file=sys.stderr)
+        return 1
 
     def _labels_within(poly, layer_name: str) -> list:
         return [t for (t, g) in labels.get(layer_name, []) if g.Within(poly)]

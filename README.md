@@ -29,6 +29,15 @@ kedua `dividers` — tidak pernah ditutup. Implementasi:
 di dalam event loop uvicorn, jadi pekerjaan native-nya hidup di proses
 terpisah).
 
+**Dua gaya gambar batas persil (v0.3.5):** (a) tiap persil digambar
+sebagai cincin TERTUTUP sendiri — tiap cincin langsung jadi satu
+persil; (b) batas digambar sebagai JARINGAN garis terbuka berbagi sisi
+— jaringan itu disatukan dulu dengan ST_BuildArea. Keduanya diproses
+dalam satu convert. Alasannya: ST_BuildArea diam-diam membuang persil
+kalau sisi yang sama digambar dua kali (sekali per persil tetangga) —
+terbukti 2026-11-26: 21 cincin → 17 persil, 4 hilang. Jadi cincin
+tertutup TIDAK lewat BuildArea.
+
 Form di halaman hanya menanyakan yang berubah tiap pekerjaan: file,
 sistem koordinat, nama file untuk GPKG. Sisanya pakai nilai tetap
 (lapisan asal `entities`, batas persil `020100`, SHM `lb_lai`).

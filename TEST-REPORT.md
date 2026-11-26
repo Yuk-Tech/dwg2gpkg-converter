@@ -365,7 +365,7 @@ proved the generic pipeline insufficient and shaped v0.2.0:
   test: `POST /convert` filename=PBT_TES → HTTP 200, layer `PBT_TES`,
   24 parcels, 24 NIB, PBT/PBTK/TGLK NULL.
 - **UI Sentra (Derana, 2026-11-26 ~16:29 WIB): "apakah bisa web
-  tersebut menggunakan UI sentra?"** v0.3.4 + PUSH (commit `TBD`):
+  tersebut menggunakan UI sentra?"** v0.3.4 + PUSH (commit `b359d93a`):
   halaman memakai identitas visual Yuk Tech / Sentra yang sama
   dengan landing page: font Plus Jakarta Sans (Google Fonts), warna
   navy #071B49 / biru #075BEB / cyan #00C9F2 / latar #F5F8FF, tombol
@@ -376,3 +376,21 @@ proved the generic pipeline insufficient and shaped v0.2.0:
   file HTML). Semua ID elemen + JS tidak berubah. Teruji live: halaman
   200, logo ter-decode sebagai PNG 96×96 yang valid, convert tetap
   HTTP 200 (24 persil, 24 NIB).
+- **RING vs JARINGAN — 4 persil hilang (Derana, 2026-11-26 ~16:39 WIB:
+  kirim file baru `tes_convert.zip`).** File baru (219 KB) strukturnya
+  BEDA dari file lama (252 KB): batas persil digambar sebagai 21 cincin
+  TERTUTUP (satu cincin per persil), bukan 65 segmen jaringan berbagi
+  sisi. Hasil convert situs atas file ini: 20 persil, 12 teks nyangkut
+  di `labels` — PERSIS sama dengan `Tes.gpkg` yang Derana kirim 16:32
+  WIB. Jadi teori "deploy lama" di entri sebelumnya SALAH: penyebabnya
+  file-nya, bukan deploy-nya. Akar masalah TERBUKTI: `ST_BuildArea(
+  ST_Collect(...))` atas 21 cincin hanya menghasilkan 17 persil —
+  39 dari 120 segmen digambar 2x (sisi yang sama ditelusuri sekali per
+  persil tetangga) dan BuildArea diam-diam membuang persil dari
+  linework yang berduplikasi begitu (yang hilang: 01505/01537/01547/
+  01559; tiap cincinnya sendiri valid + luasnya cocok dengan teks
+  luas). **Perbaikan v0.3.5** (`app/surveyor_convert.py`): cincin
+  tertutup langsung jadi poligon (tanpa BuildArea); hanya garis TERBUKA
+  yang masuk BuildArea (via memory layer + SQL yang sama). Teruji
+  live: file baru → 24/24 persil, 0 labels; file lama (jaringan) →
+  tetap 24/24 (regresi OK); file mini BIDANG → 5/5. Commit `TBD`.

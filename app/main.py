@@ -37,7 +37,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from starlette.background import BackgroundTask
 
-app = FastAPI(title="dwg2gpkg-converter", version="0.3.4")
+app = FastAPI(title="dwg2gpkg-converter", version="0.3.5")
 
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB (Cloud Run HTTP/1 request limit)
 
