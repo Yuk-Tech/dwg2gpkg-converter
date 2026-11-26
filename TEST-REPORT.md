@@ -364,3 +364,15 @@ proved the generic pipeline insufficient and shaped v0.2.0:
   becomes both the GPKG layer name and the download filename. Live
   test: `POST /convert` filename=PBT_TES → HTTP 200, layer `PBT_TES`,
   24 parcels, 24 NIB, PBT/PBTK/TGLK NULL.
+- **UI Sentra (Derana, 2026-11-26 ~16:29 WIB): "apakah bisa web
+  tersebut menggunakan UI sentra?"** v0.3.4 + PUSH (commit `TBD`):
+  halaman memakai identitas visual Yuk Tech / Sentra yang sama
+  dengan landing page: font Plus Jakarta Sans (Google Fonts), warna
+  navy #071B49 / biru #075BEB / cyan #00C9F2 / latar #F5F8FF, tombol
+  gradasi biru→cyan, langkah 1-2-3 bernomor di kartu, kepala robot
+  Sentra sebagai logo + favicon (favicon landing page diperkecil
+  512→96 px, disisipkan sebagai data URI ~20 KB di `index.html`;
+  tidak ada file gambar terpisah karena service hanya menyajikan satu
+  file HTML). Semua ID elemen + JS tidak berubah. Teruji live: halaman
+  200, logo ter-decode sebagai PNG 96×96 yang valid, convert tetap
+  HTTP 200 (24 persil, 24 NIB).

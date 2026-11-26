@@ -4,7 +4,15 @@ Web service: surveyors upload a CAD drawing (DWG/DXF) and download a
 GeoPackage in the Yuk Generate PBT plugin schema
 (layer `PBT_<number>`, MULTIPOLYGON, EPSG:23834 by default).
 
-## Cara kerja (satu mode saja)
+## Tampilan
+
+Halaman memakai identitas visual Yuk Tech / Sentra (sama seperti
+landing page majelis.site): font Plus Jakarta Sans, warna navy
+#071B49, biru #075BEB, cyan #00C9F2, latar #F5F8FF, tombol gradasi
+biru→cyan, dan kepala robot Sentra sebagai logo (diambil dari
+favicon landing page, diperkecil ke 96×96 dan disisipkan sebagai
+data URI di dalam `index.html` — tidak ada file gambar terpisah,
+karena service hanya menyajikan satu file HTML).
 
 Satu jalur konversi (keputusan Derana, 2026-11-26 — mode lama "Umum"
 dihapus di v0.3.0; kodenya ada di riwayat git kalau suatu saat perlu):
