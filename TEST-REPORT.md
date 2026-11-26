@@ -325,3 +325,12 @@ proved the generic pipeline insufficient and shaped v0.2.0:
   fields now match schema fields case-insensitively. Note: Tes
   Convert.dxf has NO NIK texts, so field A is empty there; the NIK
   layer name in Derana's files is still unknown — ask him.
+- **Single mode (Derana, 2026-11-26 ~16:15 WIB): "jadikan versi default
+  di web convert kita, jangan buat 2 mode".** v0.3.0 removes the generic
+  mode entirely from `app/main.py` (the `_build_convert_sql` path,
+  `mode`/`field_map`/`label_layer` params) and from the form (mode
+  select + field-map + label-layer inputs). The surveyor path is now
+  the only conversion. Old generic code remains in git history
+  (commits ≤ 97ca5657). Live test after removal: `POST /convert` on
+  Tes Convert.dxf → HTTP 200, 24 parcels, 24 NIB, 3 SU, 27 dividers,
+  labels layer present; `/probe` 200; form has no mode references.

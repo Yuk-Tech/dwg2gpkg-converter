@@ -4,17 +4,21 @@ Backend engine for the Yuk Generate PBT plugin: surveyors upload a CAD
 drawing (DWG/DXF) and get back a GeoPackage in the plugin schema
 (layer PBT_<number>, MULTIPOLYGON, EPSG:23834 by default).
 
-Pipeline:
-  DXF -> ogr2ogr (SQLITE dialect, field mapping + computed LUAS/M2) -> GPKG
-  DWG -> LibreDWG dwg2dxf -> DXF -> same as above
-
-Surveyor mode (mode=surveyor) handles real surveyor drawings, which draw
-parcel boundaries as an OPEN LINE NETWORK (shared edges) with NIB / NAMA /
-LUAS / SU / Nomor Hak as TEXT labels on their own layers:
+Single pipeline (one mode only — Derana, 2026-11-26: the proven
+surveyor path is the only path; the old generic mode was removed in v0.3.0,
+its code lives in git history if ever needed):
+  DWG -> LibreDWG dwg2dxf -> DXF -> surveyor conversion -> GPKG
+  DXF -> surveyor conversion -> GPKG
+Real surveyor drawings draw parcel boundaries as an OPEN LINE NETWORK
+(shared edges) with NIB / NAMA / LUAS / SU / Nomor Hak as TEXT labels on
+their own layers:
   parcel network -> ST_BuildArea(ST_Collect(...)) -> faces -> label joins
   SHM parcels (closed-flag polylines, read as LINESTRING by GDAL) -> rings
   closed by hand; dividers (jalan/gang/sungai/selokan) stay OPEN LINES in
   a second `dividers` layer — they must never be closed (Derana, 2026-11-26).
+  ALL textual content becomes attributes (Derana, 2026-11-26): known labels
+  into fixed fields, any other TEXT layer into a field named after the
+  layer, TEXTs outside every parcel preserved in a `labels` layer.
 Verified on Tes Convert.dxf (2026-11-26): 21 faces + 3 SHM = 24/24 parcels,
 areas matching the surveyor's luas texts within 1 m2.
 
@@ -33,26 +37,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from starlette.background import BackgroundTask
 
-app = FastAPI(title="dwg2gpkg-converter", version="0.2.0")
+app = FastAPI(title="dwg2gpkg-converter", version="0.3.0")
 
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB (Cloud Run HTTP/1 request limit)
-
-# Plugin schema: target field -> SQL expression template.
-# {src} is replaced with a quoted source column, {lit} with a quoted literal.
-TARGET_FIELDS = [
-    "080201",  # NIB
-    "NAMA",
-    "LUAS",    # pre-formatted 'L=177M2'
-    "M2",      # clean area, integer metres
-    "A",       # NIK
-    "080202",  # No SU (Nomor Surat Ukur) — wajib ada di PBT
-    "080203",  # Nomor Hak / SHM marker
-    "PBTK",
-    "TGLK",
-    "PBT",
-    "B",
-    "KET",     # divider words like JALAN / IRIGASI
-]
 
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
 
@@ -62,11 +49,6 @@ def _q_ident(name: str) -> str:
     if not _IDENT.match(name):
         raise HTTPException(status_code=400, detail=f"invalid identifier: {name!r}")
     return f'"{name}"'
-
-
-def _q_lit(value: str) -> str:
-    """Quote an SQL string literal (escape single quotes)."""
-    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _run(cmd: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
@@ -165,78 +147,7 @@ async def probe(file: UploadFile = File(...)) -> dict:
         return {"filename": file.filename, "format": suffix.lstrip("."), "layers": layers}
 
 
-def _build_convert_sql(
-    source_layer: str,
-    target_layer: str,
-    field_map: dict[str, str],
-    literals: dict[str, str],
-    label_layer: str | None,
-    label_field: str | None,
-) -> str:
-    """Build the SQLITE-dialect SELECT that maps CAD -> plugin schema.
-
-    field_map: target field -> source column name (or "" for NULL).
-    literals:  target field -> literal string value.
-    label_layer/label_field: optional TEXT-label join. CAD files have a
-    single "entities" layer; labels are TEXT entities on their own DXF
-    layer, so label_layer is the *value* of the Layer attribute (e.g.
-    "NIB") and label_field the attribute holding the text (default
-    "Text"). Label points are spatially joined into parcels
-    (ST_Within) and their text becomes the NIB (080201).
-    """
-    selects: list[str] = []
-    for target in TARGET_FIELDS:
-        if target in literals:
-            selects.append(f"{_q_lit(literals[target])} AS {_q_ident(target)}")
-        elif target == "LUAS":
-            selects.append(
-                "('L=' || CAST(CAST(ST_Area(p._poly) AS INTEGER) AS TEXT) || 'M2')"
-                f" AS {_q_ident(target)}"
-            )
-        elif target == "M2":
-            selects.append(f"CAST(CAST(ST_Area(p._poly) AS INTEGER) AS TEXT) AS {_q_ident(target)}")
-        elif target == "080201" and label_layer and label_field:
-            selects.append(f"l.{_q_ident(label_field)} AS {_q_ident(target)}")
-        elif target in field_map and field_map[target]:
-            selects.append(f"p.{_q_ident(field_map[target])} AS {_q_ident(target)}")
-        else:
-            selects.append(f"CAST(NULL AS TEXT) AS {_q_ident(target)}")
-
-    # GDAL reads closed LWPOLYLINE parcels as LINESTRING (not POLYGON),
-    # so polygonise linework with ST_BuildArea; real polygons pass through.
-    # A LINESTRING that is not closed yields an empty polygon (NULL area).
-    parcel_filter = "ST_GeometryType(geometry) IN ('POLYGON','MULTIPOLYGON','LINESTRING','MULTILINESTRING')"
-    if label_layer:
-        parcel_filter += f" AND Layer <> {_q_lit(label_layer)}"
-    poly_expr = (
-        "CASE WHEN ST_GeometryType(geometry) IN ('LINESTRING','MULTILINESTRING') "
-        "THEN ST_BuildArea(geometry) ELSE geometry END"
-    )
-    from_clause = (
-        f"(SELECT *, {poly_expr} AS _poly FROM {_q_ident(source_layer)} "
-        f"WHERE {parcel_filter}) p"
-    )
-    if label_layer and label_field:
-        from_clause += (
-            f" LEFT JOIN (SELECT * FROM {_q_ident(source_layer)} "
-            f"WHERE Layer = {_q_lit(label_layer)} "
-            "AND ST_GeometryType(geometry) LIKE 'POINT%') l"
-            " ON ST_Within(l.geometry, p._poly)"
-        )
-    # Outer filter is REQUIRED, not cosmetic: without it, rows whose
-    # _poly is an empty polygon (unclosed LINESTRING) or a 3D polygon
-    # (POLYGON Z from dwg2dxf output) are written, and ogr2ogr then
-    # writes *every* feature with a NULL geometry into the GPKG
-    # (observed on LibreDWG example_2000.dwg: 25 features, all NULL).
-    # With it, only real 2D polygons are written (21/21 with geometry).
-    return (
-        f"SELECT {', '.join(selects)}, p._poly AS geometry FROM {from_clause} "
-        "WHERE ST_GeometryType(p._poly) IN ('POLYGON','MULTIPOLYGON') "
-        "AND NOT ST_IsEmpty(p._poly)"
-    )
-
-
-# --- Surveyor mode -------------------------------------------------------
+# --- Conversion (single mode) ------------------------------------------
 # Real surveyor drawings need native osgeo work (polygonise + label joins),
 # but GDAL's Python bindings segfaulted inside the uvicorn event loop
 # (2026-11-26), so the conversion runs as a SUBPROCESS in
@@ -259,7 +170,7 @@ def _system_python() -> str:
     return "python3"
 
 
-def _convert_surveyor(
+def _convert(
     dxf_path: Path,
     source_layer: str,
     target_layer: str,
@@ -269,7 +180,7 @@ def _convert_surveyor(
     shm_layer: str,
     workdir: Path,
 ) -> Path:
-    """Surveyor-mode conversion via the surveyor_convert.py subprocess."""
+    """Conversion via the surveyor_convert.py subprocess."""
     out_path = workdir / f"{target_layer}.gpkg"
     res = _run(
         [
@@ -282,7 +193,7 @@ def _convert_surveyor(
     if res.returncode != 0 or not out_path.exists():
         raise HTTPException(
             status_code=422,
-            detail=f"surveyor conversion failed: {(res.stderr or res.stdout).strip()[:500]}",
+            detail=f"conversion failed: {(res.stderr or res.stdout).strip()[:500]}",
         )
     return out_path
 
@@ -293,39 +204,21 @@ async def convert(
     source_layer: str = Form("entities"),
     target_layer: str = Form("PBT_2091"),
     target_epsg: int = Form(23834),
-    field_map: str = Form("{}"),
     pbt: str = Form(""),
     pbtk: str = Form(""),
     tglk: str = Form(""),
-    label_layer: str = Form(""),
-    label_field: str = Form("Text"),
-    mode: str = Form("surveyor"),
     parcel_layer: str = Form("020100"),
     shm_layer: str = Form("lb_lai"),
 ) -> FileResponse:
     """Convert an uploaded DWG/DXF to a GPKG in the plugin schema.
 
-    mode=generic: per-feature ST_BuildArea (closed polygons, single
-    label layer). mode=surveyor (default): polygonise the parcel
-    line network + join the surveyor's label layers + SHM + line
-    dividers (see _convert_surveyor).
+    One mode only (Derana, 2026-11-26): the proven surveyor path —
+    polygonise the parcel line network + join all TEXT labels + SHM +
+    open-line dividers (see surveyor_convert.py).
     """
-    if mode not in ("generic", "surveyor"):
-        raise HTTPException(status_code=400, detail="mode must be 'generic' or 'surveyor'")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in (".dwg", ".dxf"):
         raise HTTPException(status_code=400, detail="only .dwg and .dxf uploads are supported")
-    try:
-        mapping = json.loads(field_map or "{}")
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="field_map is not valid JSON") from exc
-    if not isinstance(mapping, dict):
-        raise HTTPException(status_code=400, detail="field_map must be a JSON object")
-    for target, src in mapping.items():
-        if target not in TARGET_FIELDS:
-            raise HTTPException(status_code=400, detail=f"unknown target field: {target!r}")
-        if src:
-            _q_ident(src)  # whitelist check
 
     literals: dict[str, str] = {}
     if pbt:
@@ -345,53 +238,17 @@ async def convert(
     up.write_bytes(data)
     try:
         dxf = _to_dxf(up, suffix, workdir)
-        if mode == "surveyor":
-            out_path = _convert_surveyor(
-                dxf, source_layer, target_layer, target_epsg, literals,
-                parcel_layer, shm_layer, workdir,
+        out_path = _convert(
+            dxf, source_layer, target_layer, target_epsg, literals,
+            parcel_layer, shm_layer, workdir,
+        )
+        out_ok = out_path.exists() and _run(
+            ["ogrinfo", "-so", str(out_path), target_layer]
+        ).returncode == 0
+        if not out_ok:
+            raise HTTPException(
+                status_code=422, detail="conversion produced no readable output",
             )
-            out_ok = out_path.exists() and _run(
-                ["ogrinfo", "-so", str(out_path), target_layer]
-            ).returncode == 0
-            if not out_ok:
-                raise HTTPException(
-                    status_code=422, detail="surveyor conversion produced no readable output",
-                )
-        else:
-            sql = _build_convert_sql(
-                source_layer,
-                target_layer,
-                mapping,
-                literals,
-                label_layer or None,
-                label_field or None,
-            )
-            out_path = workdir / f"{target_layer}.gpkg"
-            cmd = [
-                "ogr2ogr", "-f", "GPKG", str(out_path), str(dxf),
-                "-nln", target_layer, "-nlt", "MULTIPOLYGON",
-                "-s_srs", f"EPSG:{int(target_epsg)}", "-t_srs", f"EPSG:{int(target_epsg)}",
-                # -skipfailures: real-world CAD files contain entities the DXF
-                # driver cannot parse (e.g. VIEWPORTs, 3D solids from dwg2dxf
-                # output). Without it, one bad entity aborts the whole
-                # translation; with it, the parseable parcels are still
-                # written (see TEST-REPORT.md section 3d).
-                "-dialect", "SQLITE", "-skipfailures", "-sql", sql,
-            ]
-            res = _run(cmd)
-            # ogr2ogr can exit non-zero yet still write a usable GPKG (e.g.
-            # when the DXF driver hits an unparseable entity mid-file, it
-            # prints "Terminating translation prematurely" but -skipfailures
-            # keeps the features written so far). Accept the output when the
-            # target layer is actually present and readable.
-            out_ok = out_path.exists() and _run(
-                ["ogrinfo", "-so", str(out_path), target_layer]
-            ).returncode == 0
-            if not out_ok:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"ogr2ogr failed (rc={res.returncode}): {(res.stderr or res.stdout).strip()[:800]}",
-                )
     except HTTPException:
         tmp.cleanup()
         raise

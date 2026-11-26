@@ -4,20 +4,22 @@ Web service: surveyors upload a CAD drawing (DWG/DXF) and download a
 GeoPackage in the Yuk Generate PBT plugin schema
 (layer `PBT_<number>`, MULTIPOLYGON, EPSG:23834 by default).
 
-## Modes
+## Cara kerja (satu mode saja)
 
-- **Surveyor (default)** — real surveyor drawings: parcel boundaries are
-  an open line network on layer `020100`, SHM parcels on `lb_lai`, and
-  NIB / NAMA / LUAS / No SU / Nomor Hak are TEXT labels on layers
-  `080201` / `tn_nama` / `luas` / `080202` / `#080203`. The service
-  polygonises the network, joins the labels, and keeps divider lines
-  (Jalan `040100`, Gang `040600`, Sungai `03011`/`030100`, Selokan
-  `030300`) as OPEN LINES in a second `dividers` layer — they must
-  never be closed. Implementation: `app/surveyor_convert.py`, run as a
-  subprocess (GDAL's Python bindings segfault inside the uvicorn event
-  loop, so the native work lives in a plain process).
-- **Generic** — closed polygons + one label layer (per-feature
-  ST_BuildArea, the original pipeline).
+Satu jalur konversi (keputusan Derana, 2026-11-26 — mode lama "Umum"
+dihapus di v0.3.0; kodenya ada di riwayat git kalau suatu saat perlu):
+file ukur asli — batas persil berupa jaringan garis di lapisan `020100`,
+persil SHM di `lb_lai`, dan NIB / nama / luas / No SU / Nomor Hak berupa
+tulisan (TEXT) di lapisan `080201` / `tn_nama` / `luas` / `080202` /
+`#080203`. Service mengubah jaringan garis jadi persil, menggabungkan
+semua tulisan jadi atribut (lapisan TEXT lain yang belum dikenal otomatis
+jadi field baru; tulisan di luar persil disimpan di lapisan `labels`),
+dan menjaga garis pembatas (Jalan `040100`, Gang `040600`, Sungai
+`03011`/`030100`, Selokan `030300`) tetap berupa garis terbuka di lapisan
+kedua `dividers` — tidak pernah ditutup. Implementasi:
+`app/surveyor_convert.py`, dijalankan sebagai subprocess (GDAL segfault
+di dalam event loop uvicorn, jadi pekerjaan native-nya hidup di proses
+terpisah).
 
 ## Layout
 
