@@ -24,49 +24,25 @@ langsung dipakai plugin <b>Yuk Generate PBT</b>.</p>
 <p><b>Cara pakai:</b></p>
 <ol>
   <li>Pilih file gambar ukur (DWG atau DXF).</li>
-  <li>Kalau mau, klik "Lihat isi file" untuk memeriksa lapisan di dalamnya.</li>
+  <li>Pilih sistem koordinatnya (biasanya TM-3 zona 48.2), lalu isi nomor PBT, nomor PBTK, dan tanggal.</li>
   <li>Klik "Ubah &amp; unduh" — file peta langsung terunduh.</li>
 </ol>
+<p>Kalau mau memeriksa lapisan di dalam file dulu, klik "Lihat isi file".</p>
 
 <form id="f">
   <label>File gambar ukur (DWG atau DXF, maks 32 MB)
     <input type="file" id="file" name="file" accept=".dwg,.dxf" required>
   </label>
-  <button type="button" id="probeBtn">1. Lihat isi file dulu</button>
+  <button type="button" id="probeBtn">Lihat isi file dulu</button>
   <pre id="probeOut">Belum ada file yang dilihat.</pre>
 
-  <label>Nama lapisan di dalam file
-    <input type="text" id="source_layer" value="entities">
-    <small>Semua gambar di file DXF tersimpan di lapisan bernama "entities". Biarkan saja, kecuali kamu tahu pasti.</small>
+  <label>Sistem koordinat
+    <select id="crs">
+      <option value="tm3-48.2" selected>TM-3 zona 48.2</option>
+    </select>
+    <small>Sistem koordinat yang dipakai file gambar ukurmu. Kalau lokasimu di Cianjur dan sekitarnya, pilih TM-3 zona 48.2.</small>
   </label>
-  <div class="row">
-    <div>
-      <label>Lapisan garis batas persil
-        <input type="text" id="parcel_layer" value="020100">
-        <small>Kode lapisan garis batas persil di file ukurmu. Biasanya 020100.</small>
-      </label>
-    </div>
-    <div>
-      <label>Lapisan persil SHM
-        <input type="text" id="shm_layer" value="lb_lai">
-        <small>Kode lapisan persil yang sudah bersertifikat. Biasanya lb_lai.</small>
-      </label>
-    </div>
-  </div>
-  <div class="row">
-    <div>
-      <label>Nama lapisan di file hasil
-        <input type="text" id="target_layer" value="PBT_2091">
-        <small>Nama lapisan di file peta hasil, contoh: PBT_1.</small>
-      </label>
-    </div>
-    <div>
-      <label>Zona koordinat
-        <input type="number" id="target_epsg" value="23834">
-        <small>23834 = TM-3 zona 48.2 (Cianjur dan sekitarnya). Biarkan saja kalau lokasimu di zona ini.</small>
-      </label>
-    </div>
-  </div>
+
   <div class="row">
     <div>
       <label>Nomor PBT
@@ -85,13 +61,31 @@ langsung dipakai plugin <b>Yuk Generate PBT</b>.</p>
     <input type="text" id="tglk" value="06 November 2026">
     <small>Tanggal yang tampil di bingkai PBT.</small>
   </label>
-  <button type="button" id="convBtn">2. Ubah &amp; unduh file peta</button>
+  <button type="button" id="convBtn">Ubah &amp; unduh file peta</button>
 </form>
 <div id="status"></div>
 
 <script>
 const $ = id => document.getElementById(id);
 const status = $('status');
+
+// Isi pilihan sistem koordinat dari server (satu sumber kebenaran);
+// kalau gagal, tetap ada pilihan baku TM-3 zona 48.2 di atas.
+fetch('/crs').then(r => r.json()).then(j => {
+  const sel = $('crs');
+  sel.innerHTML = '';
+  for (const g of j.groups) {
+    const og = document.createElement('optgroup');
+    og.label = g.name;
+    for (const o of g.options) {
+      const el = document.createElement('option');
+      el.value = o.key; el.textContent = o.label;
+      if (o.key === j.default) el.selected = true;
+      og.appendChild(el);
+    }
+    sel.appendChild(og);
+  }
+}).catch(() => {});
 
 $('probeBtn').onclick = async () => {
   const f = $('file').files[0];
@@ -109,7 +103,7 @@ $('convBtn').onclick = async () => {
   if (!f) { status.textContent = 'Pilih file dulu.'; return; }
   const fd = new FormData();
   fd.append('file', f);
-  for (const k of ['source_layer','target_layer','target_epsg','pbt','pbtk','tglk','parcel_layer','shm_layer'])
+  for (const k of ['crs','pbt','pbtk','tglk'])
     fd.append(k, $(k).value);
   status.textContent = 'Mengubah file…';
   const r = await fetch('/convert', { method: 'POST', body: fd });
@@ -121,7 +115,7 @@ $('convBtn').onclick = async () => {
   const blob = await r.blob();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = $('target_layer').value + '.gpkg';
+  a.download = 'PBT_' + ($('pbt').value || '2091') + '.gpkg';
   a.click();
   status.textContent = 'File peta sudah diunduh.';
 };

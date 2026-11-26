@@ -21,6 +21,17 @@ kedua `dividers` — tidak pernah ditutup. Implementasi:
 di dalam event loop uvicorn, jadi pekerjaan native-nya hidup di proses
 terpisah).
 
+Form di halaman hanya menanyakan yang berubah tiap pekerjaan: file,
+sistem koordinat, nomor PBT, nomor PBTK, tanggal. Sisanya pakai nilai
+tetap (lapisan asal `entities`, batas persil `020100`, SHM `lb_lai`)
+dan nama lapisan hasil mengikuti nomor PBT (`PBT_<nomor>`).
+
+Sistem koordinat dipilih pakai nama, bukan kode EPSG (Derana,
+2026-11-26): TM-3 zona 46.2–54.1 (DGN95, 16 zona), UTM zona 46–54
+Utara/Selatan (WGS84), UTM datum lama ID74 zona 46–52 Utara, dan
+lintang/bujur WGS84 — 42 pilihan, diambil dari `GET /crs`. Nilai
+bawaan: TM-3 zona 48.2.
+
 ## Layout
 
 - `app/main.py` — FastAPI service (`/probe`, `/convert`, `/health`, `/`)

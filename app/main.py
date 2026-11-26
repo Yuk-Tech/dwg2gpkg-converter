@@ -37,9 +37,33 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from starlette.background import BackgroundTask
 
-app = FastAPI(title="dwg2gpkg-converter", version="0.3.0")
+app = FastAPI(title="dwg2gpkg-converter", version="0.3.2")
 
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB (Cloud Run HTTP/1 request limit)
+
+# Coordinate systems by plain name (Derana, 2026-11-26: no EPSG codes in
+# the form — the user picks a name, the service resolves it to EPSG).
+# Codes verified against PROJ (2026-11-26): TM-3 is DGN95, zones 46.2
+# (EPSG 23830) through 54.1 (EPSG 23845); EPSG has no TM-3 46.1 or 54.2
+# (outside Indonesia's landmass). UTM WGS84: 46N-54N (32646-32654),
+# 46S-54S (32746-32754). ID74 UTM: 46N-52N (23846-23852; 53N deprecated).
+# key -> (group, plain label, EPSG code)
+CRS_OPTIONS: dict[str, tuple[str, str, int]] = {}
+for _zone, _epsg in [
+    ("46.2", 23830), ("47.1", 23831), ("47.2", 23832), ("48.1", 23833),
+    ("48.2", 23834), ("49.1", 23835), ("49.2", 23836), ("50.1", 23837),
+    ("50.2", 23838), ("51.1", 23839), ("51.2", 23840), ("52.1", 23841),
+    ("52.2", 23842), ("53.1", 23843), ("53.2", 23844), ("54.1", 23845),
+]:
+    CRS_OPTIONS[f"tm3-{_zone}"] = ("TM-3 (paling umum untuk ukur tanah)", f"TM-3 zona {_zone}", _epsg)
+for _z in range(46, 55):
+    CRS_OPTIONS[f"utm-{_z}n"] = ("UTM (WGS84)", f"UTM zona {_z} Utara", 32600 + _z)
+    CRS_OPTIONS[f"utm-{_z}s"] = ("UTM (WGS84)", f"UTM zona {_z} Selatan", 32700 + _z)
+for _z in range(46, 53):
+    CRS_OPTIONS[f"id74-{_z}n"] = ("UTM (datum lama ID74)", f"UTM zona {_z} Utara", 23800 + _z)
+CRS_OPTIONS["wgs84"] = ("Lainnya", "Lintang/bujur (WGS84)", 4326)
+
+DEFAULT_CRS = "tm3-48.2"  # TM-3 zona 48.2 — Cianjur dan sekitarnya
 
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
 
@@ -109,6 +133,18 @@ def _ogrinfo_sample(dxf_path: Path, layer: str, limit: int = 3) -> list[dict]:
         props.pop("geometry", None)
         out.append(props)
     return out
+
+
+@app.get("/crs")
+def crs_list() -> dict:
+    """Coordinate systems the form offers (plain names; EPSG resolved here)."""
+    groups: dict[str, list[dict]] = {}
+    for key, (group, label, epsg) in CRS_OPTIONS.items():
+        groups.setdefault(group, []).append({"key": key, "label": label, "epsg": epsg})
+    return {
+        "default": DEFAULT_CRS,
+        "groups": [{"name": name, "options": opts} for name, opts in groups.items()],
+    }
 
 
 @app.get("/health")
@@ -202,8 +238,8 @@ def _convert(
 async def convert(
     file: UploadFile = File(...),
     source_layer: str = Form("entities"),
-    target_layer: str = Form("PBT_2091"),
-    target_epsg: int = Form(23834),
+    target_layer: str = Form(""),
+    crs: str = Form(DEFAULT_CRS),
     pbt: str = Form(""),
     pbtk: str = Form(""),
     tglk: str = Form(""),
@@ -214,11 +250,18 @@ async def convert(
 
     One mode only (Derana, 2026-11-26): the proven surveyor path —
     polygonise the parcel line network + join all TEXT labels + SHM +
-    open-line dividers (see surveyor_convert.py).
+    open-line dividers (see surveyor_convert.py). The form only asks
+    for what varies per job (file, coordinate system, PBT, PBTK, date);
+    everything else has a fixed default (Derana, 2026-11-26: fields
+    that don't need filling were removed from the form). The output
+    layer is named after the PBT number: PBT_<pbt>.
     """
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in (".dwg", ".dxf"):
         raise HTTPException(status_code=400, detail="only .dwg and .dxf uploads are supported")
+    if crs not in CRS_OPTIONS:
+        raise HTTPException(status_code=400, detail=f"unknown coordinate system: {crs!r}")
+    target_epsg = CRS_OPTIONS[crs][2]
 
     literals: dict[str, str] = {}
     if pbt:
@@ -227,6 +270,8 @@ async def convert(
         literals["PBTK"] = pbtk
     if tglk:
         literals["TGLK"] = tglk
+    if not target_layer:
+        target_layer = f"PBT_{pbt}" if pbt else "PBT_2091"
 
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:

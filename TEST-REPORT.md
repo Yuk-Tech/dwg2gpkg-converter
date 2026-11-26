@@ -334,3 +334,23 @@ proved the generic pipeline insufficient and shaped v0.2.0:
   (commits ≤ 97ca5657). Live test after removal: `POST /convert` on
   Tes Convert.dxf → HTTP 200, 24 parcels, 24 NIB, 3 SU, 27 dividers,
   labels layer present; `/probe` 200; form has no mode references.
+- **Form simplified (Derana, 2026-11-26 ~16:17 WIB): "yang tidak perlu
+  di isi, dihilangkan saja".** v0.3.1 removes the fill-in fields that
+  never change from the form (source layer `entities`, parcel layer
+  `020100`, SHM layer `lb_lai`, EPSG 23834, target layer name) — they
+  stay as server-side defaults. The form now asks only: file, PBT,
+  PBTK, date. The output layer is named after the PBT number
+  (`PBT_<pbt>`, fallback `PBT_2091` when empty). Live test: `POST
+  /convert` with only pbt/pbtk/tglk → HTTP 200, layer `PBT_1` when
+  pbt=1, 24 parcels, 24 NIB.
+- **Coordinate systems by name (Derana, 2026-11-26 ~16:18 WIB):
+  "jangan pakai kode epsg, gunakan istilah TM3 UTM dan lain-lain ...
+  konverter otomatis mengubahnya jadi epsg".** v0.3.2: the form has a
+  "Sistem koordinat" dropdown (plain names, no EPSG codes) populated
+  from `GET /crs` — 42 options: TM-3 zona 46.2–54.1 (DGN95), UTM
+  46–54 Utara/Selatan (WGS84), UTM ID74 46–52 Utara, lintang/bujur
+  WGS84. Codes verified against PROJ: 23834 is TM-3 zone 48.2
+  (central meridian 106.5°E); EPSG has no TM-3 46.1 or 54.2. The
+  service resolves the picked name to EPSG server-side. Live test:
+  crs=tm3-48.2 → output SRS EPSG:23834; crs=utm-48s → EPSG:32748;
+  crs=wgs84 → EPSG:4326; unknown crs → HTTP 400.
