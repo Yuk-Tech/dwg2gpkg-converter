@@ -63,8 +63,13 @@ SURVEYOR_LABELS = {
 
 TARGET_FIELDS = [
     "080201", "NAMA", "LUAS", "M2", "A", "080202", "080203",
-    "PBTK", "TGLK", "PBT", "B", "KET",
+    "PBTK", "TGLK", "PBT", "B", "KET", "Layer",
 ]
+# "Layer" = nama layer sumber DXF per persil ("020100" biasa, "lb_lai"
+# SHM). Ditambah 2026-11-27 (v0.3.6): identitas SHM datang dari layer
+# sumber, BUKAN dari field 080203 — 080203 kosong bila DXF tidak punya
+# teks #080203 (kasus BGAS), sementara lb_lai tetap ada. Plugin baca
+# Layer='lb_lai' untuk deteksi SHM (080203 tetap fallback GPKG lama).
 
 
 def _as_polygon(geom):
@@ -250,7 +255,7 @@ def main() -> int:
         if name not in TARGET_FIELDS:
             olyr.CreateField(ogr.FieldDefn(name, ogr.OFTString))
 
-    def _add_parcel(poly):
+    def _add_parcel(poly, src_layer):
         mp = ogr.Geometry(ogr.wkbMultiPolygon)
         mp.AddGeometry(poly.Clone())
         area = poly.GetArea()
@@ -270,15 +275,18 @@ def main() -> int:
             hits = _labels_within(poly, lyr_name)
             if hits:
                 f.SetField(fname, "; ".join(hits))
+        # Cap layer sumber SETELAH dynamic loop supaya menang bila ada
+        # TEXT layer bernama "Layer" (sangat tidak mungkin, tapi aman).
+        f.SetField("Layer", src_layer)
         for key in ("PBT", "PBTK", "TGLK"):
             if key in literals:
                 f.SetField(key, literals[key])
         olyr.CreateFeature(f)
 
     for face in faces:
-        _add_parcel(face)
+        _add_parcel(face, parcel_layer)
     for sp in shm_polys:
-        _add_parcel(sp)
+        _add_parcel(sp, shm_layer)
 
     dlyr = ods.CreateLayer("dividers", srs, ogr.wkbLineString)
     dlyr.CreateField(ogr.FieldDefn("KET", ogr.OFTString))
