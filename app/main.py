@@ -8,6 +8,16 @@ Pipeline:
   DXF -> ogr2ogr (SQLITE dialect, field mapping + computed LUAS/M2) -> GPKG
   DWG -> LibreDWG dwg2dxf -> DXF -> same as above
 
+Surveyor mode (mode=surveyor) handles real surveyor drawings, which draw
+parcel boundaries as an OPEN LINE NETWORK (shared edges) with NIB / NAMA /
+LUAS / SU / Nomor Hak as TEXT labels on their own layers:
+  parcel network -> ST_BuildArea(ST_Collect(...)) -> faces -> label joins
+  SHM parcels (closed-flag polylines, read as LINESTRING by GDAL) -> rings
+  closed by hand; dividers (jalan/gang/sungai/selokan) stay OPEN LINES in
+  a second `dividers` layer — they must never be closed (Derana, 2026-11-26).
+Verified on Tes Convert.dxf (2026-11-26): 21 faces + 3 SHM = 24/24 parcels,
+areas matching the surveyor's luas texts within 1 m2.
+
 Stateless: all temp files live under /tmp (tempfile.TemporaryDirectory).
 No credentials, no database, no persistent state.
 """
@@ -23,7 +33,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from starlette.background import BackgroundTask
 
-app = FastAPI(title="dwg2gpkg-converter", version="0.1.0")
+app = FastAPI(title="dwg2gpkg-converter", version="0.2.0")
 
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB (Cloud Run HTTP/1 request limit)
 
@@ -35,6 +45,7 @@ TARGET_FIELDS = [
     "LUAS",    # pre-formatted 'L=177M2'
     "M2",      # clean area, integer metres
     "A",       # NIK
+    "080202",  # No SU (Nomor Surat Ukur) — wajib ada di PBT
     "080203",  # Nomor Hak / SHM marker
     "PBTK",
     "TGLK",
@@ -225,6 +236,57 @@ def _build_convert_sql(
     )
 
 
+# --- Surveyor mode -------------------------------------------------------
+# Real surveyor drawings need native osgeo work (polygonise + label joins),
+# but GDAL's Python bindings segfaulted inside the uvicorn event loop
+# (2026-11-26), so the conversion runs as a SUBPROCESS in
+# app/surveyor_convert.py (plain python3 with system python3-gdal).
+# Layer codes are LAYER NAMES in the surveyor's DXF (Derana, 2026-11-26):
+# 040100 Jalan, 040600 Gang, 03011/030100 Sungai, 030300 Selokan,
+# lb_lai SHM; labels on 080201 (NIB), tn_nama, luas, 080202 (No SU),
+# #080203 (M. Nomor Hak). Dividers stay OPEN LINES, never closed.
+
+import sys
+
+_SURVEYOR_SCRIPT = Path(__file__).parent / "surveyor_convert.py"
+
+
+def _system_python() -> str:
+    """System python3 (has osgeo via python3-gdal); the venv python does not."""
+    for cand in ("/usr/bin/python3", sys.executable):
+        if cand and Path(cand).exists():
+            return cand
+    return "python3"
+
+
+def _convert_surveyor(
+    dxf_path: Path,
+    source_layer: str,
+    target_layer: str,
+    target_epsg: int,
+    literals: dict[str, str],
+    parcel_layer: str,
+    shm_layer: str,
+    workdir: Path,
+) -> Path:
+    """Surveyor-mode conversion via the surveyor_convert.py subprocess."""
+    out_path = workdir / f"{target_layer}.gpkg"
+    res = _run(
+        [
+            _system_python(), str(_SURVEYOR_SCRIPT),
+            str(dxf_path), source_layer, target_layer, str(int(target_epsg)),
+            parcel_layer, shm_layer, json.dumps(literals), str(out_path),
+        ],
+        timeout=300,
+    )
+    if res.returncode != 0 or not out_path.exists():
+        raise HTTPException(
+            status_code=422,
+            detail=f"surveyor conversion failed: {(res.stderr or res.stdout).strip()[:500]}",
+        )
+    return out_path
+
+
 @app.post("/convert")
 async def convert(
     file: UploadFile = File(...),
@@ -237,8 +299,19 @@ async def convert(
     tglk: str = Form(""),
     label_layer: str = Form(""),
     label_field: str = Form("Text"),
+    mode: str = Form("surveyor"),
+    parcel_layer: str = Form("020100"),
+    shm_layer: str = Form("lb_lai"),
 ) -> FileResponse:
-    """Convert an uploaded DWG/DXF to a GPKG in the plugin schema."""
+    """Convert an uploaded DWG/DXF to a GPKG in the plugin schema.
+
+    mode=generic: per-feature ST_BuildArea (closed polygons, single
+    label layer). mode=surveyor (default): polygonise the parcel
+    line network + join the surveyor's label layers + SHM + line
+    dividers (see _convert_surveyor).
+    """
+    if mode not in ("generic", "surveyor"):
+        raise HTTPException(status_code=400, detail="mode must be 'generic' or 'surveyor'")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in (".dwg", ".dxf"):
         raise HTTPException(status_code=400, detail="only .dwg and .dxf uploads are supported")
@@ -272,40 +345,53 @@ async def convert(
     up.write_bytes(data)
     try:
         dxf = _to_dxf(up, suffix, workdir)
-        sql = _build_convert_sql(
-            source_layer,
-            target_layer,
-            mapping,
-            literals,
-            label_layer or None,
-            label_field or None,
-        )
-        out_path = workdir / f"{target_layer}.gpkg"
-        cmd = [
-            "ogr2ogr", "-f", "GPKG", str(out_path), str(dxf),
-            "-nln", target_layer, "-nlt", "MULTIPOLYGON",
-            "-s_srs", f"EPSG:{int(target_epsg)}", "-t_srs", f"EPSG:{int(target_epsg)}",
-            # -skipfailures: real-world CAD files contain entities the DXF
-            # driver cannot parse (e.g. VIEWPORTs, 3D solids from dwg2dxf
-            # output). Without it, one bad entity aborts the whole
-            # translation; with it, the parseable parcels are still
-            # written (see TEST-REPORT.md section 3d).
-            "-dialect", "SQLITE", "-skipfailures", "-sql", sql,
-        ]
-        res = _run(cmd)
-        # ogr2ogr can exit non-zero yet still write a usable GPKG (e.g.
-        # when the DXF driver hits an unparseable entity mid-file, it
-        # prints "Terminating translation prematurely" but -skipfailures
-        # keeps the features written so far). Accept the output when the
-        # target layer is actually present and readable.
-        out_ok = out_path.exists() and _run(
-            ["ogrinfo", "-so", str(out_path), target_layer]
-        ).returncode == 0
-        if not out_ok:
-            raise HTTPException(
-                status_code=422,
-                detail=f"ogr2ogr failed (rc={res.returncode}): {(res.stderr or res.stdout).strip()[:800]}",
+        if mode == "surveyor":
+            out_path = _convert_surveyor(
+                dxf, source_layer, target_layer, target_epsg, literals,
+                parcel_layer, shm_layer, workdir,
             )
+            out_ok = out_path.exists() and _run(
+                ["ogrinfo", "-so", str(out_path), target_layer]
+            ).returncode == 0
+            if not out_ok:
+                raise HTTPException(
+                    status_code=422, detail="surveyor conversion produced no readable output",
+                )
+        else:
+            sql = _build_convert_sql(
+                source_layer,
+                target_layer,
+                mapping,
+                literals,
+                label_layer or None,
+                label_field or None,
+            )
+            out_path = workdir / f"{target_layer}.gpkg"
+            cmd = [
+                "ogr2ogr", "-f", "GPKG", str(out_path), str(dxf),
+                "-nln", target_layer, "-nlt", "MULTIPOLYGON",
+                "-s_srs", f"EPSG:{int(target_epsg)}", "-t_srs", f"EPSG:{int(target_epsg)}",
+                # -skipfailures: real-world CAD files contain entities the DXF
+                # driver cannot parse (e.g. VIEWPORTs, 3D solids from dwg2dxf
+                # output). Without it, one bad entity aborts the whole
+                # translation; with it, the parseable parcels are still
+                # written (see TEST-REPORT.md section 3d).
+                "-dialect", "SQLITE", "-skipfailures", "-sql", sql,
+            ]
+            res = _run(cmd)
+            # ogr2ogr can exit non-zero yet still write a usable GPKG (e.g.
+            # when the DXF driver hits an unparseable entity mid-file, it
+            # prints "Terminating translation prematurely" but -skipfailures
+            # keeps the features written so far). Accept the output when the
+            # target layer is actually present and readable.
+            out_ok = out_path.exists() and _run(
+                ["ogrinfo", "-so", str(out_path), target_layer]
+            ).returncode == 0
+            if not out_ok:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"ogr2ogr failed (rc={res.returncode}): {(res.stderr or res.stdout).strip()[:800]}",
+                )
     except HTTPException:
         tmp.cleanup()
         raise

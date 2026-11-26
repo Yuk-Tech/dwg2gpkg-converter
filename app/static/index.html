@@ -30,6 +30,24 @@ MULTIPOLYGON, EPSG:23834).</p>
   <label>Layer sumber (parcels)
     <input type="text" id="source_layer" value="entities">
   </label>
+  <label>Mode konversi
+    <select id="mode">
+      <option value="surveyor" selected>Surveyor — jaringan garis + label (file ukur asli)</option>
+      <option value="generic">Umum — poligon tertutup + 1 layer label</option>
+    </select>
+  </label>
+  <div class="row">
+    <div>
+      <label>Layer persil (mode surveyor)
+        <input type="text" id="parcel_layer" value="020100">
+      </label>
+    </div>
+    <div>
+      <label>Layer SHM (mode surveyor)
+        <input type="text" id="shm_layer" value="lb_lai">
+      </label>
+    </div>
+  </div>
   <div class="row">
     <div>
       <label>Nama layer target
@@ -96,7 +114,7 @@ $('convBtn').onclick = async () => {
   if (!f) { status.textContent = 'Pilih file dulu.'; return; }
   const fd = new FormData();
   fd.append('file', f);
-  for (const k of ['source_layer','target_layer','target_epsg','field_map','pbt','pbtk','tglk','label_layer','label_field'])
+  for (const k of ['source_layer','target_layer','target_epsg','field_map','pbt','pbtk','tglk','label_layer','label_field','mode','parcel_layer','shm_layer'])
     fd.append(k, $(k).value);
   status.textContent = 'Mengonversi…';
   const r = await fetch('/convert', { method: 'POST', body: fd });

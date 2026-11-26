@@ -273,3 +273,39 @@ needs GDAL ≥ 3.7) and the label JOIN fails (`no such column: l.Text` —
 NIB mapping from TEXT labels dead). The Dockerfile base was changed
 to `ubuntu:24.04` (GDAL 3.8.4, the version tested on this VM) and
 `make` was capped at `-j2`. Render build is the final validation.
+
+## 9. Surveyor mode — real file from Derana (2026-11-26)
+
+Derana's real file `Tes Convert.dxf` (252 KB, 95 LWPOLYLINE + 78 TEXT)
+proved the generic pipeline insufficient and shaped v0.2.0:
+
+- **Codes are LAYER NAMES.** Parcel boundaries live on layer `020100`
+  as an OPEN LINE NETWORK (65 segments, 39 of them 2-vertex, 0 closed,
+  45/106 endpoints shared by ≥2 segments) — not closed polygons.
+  The generic per-feature `ST_BuildArea` returns 0 parcels from it.
+- **Polygonise works:** `ST_BuildArea(ST_Collect(...))` on the network
+  yields 21 faces; face areas match the surveyor's `luas` TEXTs within
+  1 m². SHM parcels are closed-flag LWPOLYLINEs on `lb_lai` (3) —
+  GDAL reads them as LINESTRING, so the ring is closed by hand.
+- **Labels are TEXT on their own layers:** `080201` NIB ×24,
+  `tn_nama` ×24, `luas` ×24 (`L=546 m2`), `080202` No SU ×3
+  (`SU.00114/2010` — wajib di PBT, so `080202` joined the schema),
+  `#080203` `M.00xxx` ×3. All 24 parcels get NIB + NAMA; the 3 SHM
+  parcels get SU + `080203` (00116 → SU.00114/2010 + M.00049,
+  00249 → SU.00593/2017 + M.00176, 00257 → SU.00603/2017 + M.00188).
+- **Dividers are open lines and STAY open** (Derana: sungai/selokan/
+  jalan/gang "tidak boleh tertutup, harus terbuka seperti di dwg").
+  Codes → KET: `040100` Jalan, `040600` Gang, `03011`/`030100` Sungai,
+  `030300` Selokan. Output keeps them as a second `dividers`
+  LINESTRING layer (27 lines) — the plugin does not read it yet.
+- **Service v0.2.0** (`mode=surveyor`, default): `app/main.py` +
+  `app/surveyor_convert.py` (subprocess — GDAL's Python bindings
+  segfaulted inside the uvicorn event loop; root cause found with
+  faulthandler: `_as_polygon` returned a borrowed child reference of a
+  temporary multipolygon, fixed by cloning the part). Dockerfile adds
+  `python3-gdal` (system python3 runs the subprocess).
+- **Live service test (this VM, GDAL 3.8.4):** `POST /convert`
+  mode=surveyor on Tes Convert.dxf → HTTP 200, 24 parcels, 0 NULL
+  geometry, 24 NIB, 3 SU, 3 `080203`, 27 dividers — identical to the
+  one-off proof script. Generic-mode regression on
+  `PBT_mini_surveyor.dxf` still 6 parcels / 5 NIB; `/probe` 200.
