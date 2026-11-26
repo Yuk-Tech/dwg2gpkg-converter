@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DWG/DXF → GPKG — Yuk Generate PBT</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; } label { display: block; margin: .6rem 0 .2rem; font-weight: 600; }
+  input, select, textarea { width: 100%; padding: .45rem; box-sizing: border-box; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  button { margin-top: 1rem; padding: .6rem 1.2rem; cursor: pointer; }
+  pre { background: #f4f4f4; padding: .8rem; overflow: auto; white-space: pre-wrap; }
+  #status { margin-top: 1rem; }
+</style>
+</head>
+<body>
+<h1>DWG / DXF → GPKG</h1>
+<p>Konverter untuk plugin <b>Yuk Generate PBT</b>. Unggah gambar ukur (DWG/DXF),
+petakan field-nya, unduh GPKG siap pakai (layer <code>PBT_&lt;nomor&gt;</code>,
+MULTIPOLYGON, EPSG:23834).</p>
+
+<form id="f">
+  <label>File DWG / DXF (maks 32 MB)
+    <input type="file" id="file" name="file" accept=".dwg,.dxf" required>
+  </label>
+  <button type="button" id="probeBtn">1. Periksa isi file (probe)</button>
+  <pre id="probeOut">Belum ada file diperiksa.</pre>
+
+  <label>Layer sumber (parcels)
+    <input type="text" id="source_layer" value="entities">
+  </label>
+  <div class="row">
+    <div>
+      <label>Nama layer target
+        <input type="text" id="target_layer" value="PBT_2091">
+      </label>
+    </div>
+    <div>
+      <label>EPSG target
+        <input type="number" id="target_epsg" value="23834">
+      </label>
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>PBT (nomor)
+        <input type="text" id="pbt" value="2091">
+      </label>
+    </div>
+    <div>
+      <label>PBTK
+        <input type="text" id="pbtk" value="2091">
+      </label>
+    </div>
+  </div>
+  <label>TGLK
+    <input type="text" id="tglk" value="06 November 2026">
+  </label>
+  <label>Pemetaan field (JSON: field target → kolom sumber; kosong = NULL)
+    <textarea id="field_map" rows="4">{}</textarea>
+  </label>
+  <div class="row">
+    <div>
+      <label>Layer label teks (opsional, untuk NIB) — nama layer DXF berisi TEXT
+        <input type="text" id="label_layer" value="" placeholder="cth: NIB">
+      </label>
+    </div>
+    <div>
+      <label>Kolom teks label
+        <input type="text" id="label_field" value="Text">
+      </label>
+    </div>
+  </div>
+  <button type="button" id="convBtn">2. Convert &amp; unduh GPKG</button>
+</form>
+<div id="status"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const status = $('status');
+
+$('probeBtn').onclick = async () => {
+  const f = $('file').files[0];
+  if (!f) { status.textContent = 'Pilih file dulu.'; return; }
+  const fd = new FormData(); fd.append('file', f);
+  status.textContent = 'Memeriksa file…';
+  const r = await fetch('/probe', { method: 'POST', body: fd });
+  const j = await r.json();
+  $('probeOut').textContent = JSON.stringify(j, null, 2);
+  status.textContent = r.ok ? 'Probe OK.' : ('Probe gagal: ' + (j.detail || r.status));
+};
+
+$('convBtn').onclick = async () => {
+  const f = $('file').files[0];
+  if (!f) { status.textContent = 'Pilih file dulu.'; return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  for (const k of ['source_layer','target_layer','target_epsg','field_map','pbt','pbtk','tglk','label_layer','label_field'])
+    fd.append(k, $(k).value);
+  status.textContent = 'Mengonversi…';
+  const r = await fetch('/convert', { method: 'POST', body: fd });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    status.textContent = 'Convert gagal: ' + (j.detail || r.status);
+    return;
+  }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = $('target_layer').value + '.gpkg';
+  a.click();
+  status.textContent = 'GPKG diunduh.';
+};
+</script>
+</body>
+</html>

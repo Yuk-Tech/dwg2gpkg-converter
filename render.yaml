@@ -1,0 +1,10 @@
+# Render Blueprint — dwg2gpkg-converter (DWG/DXF -> GPKG for the Yuk Generate PBT plugin)
+# Deploy: Render dashboard -> New -> Blueprint -> connect this repo.
+services:
+  - type: web
+    name: dwg2gpkg-converter
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
