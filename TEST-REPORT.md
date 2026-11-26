@@ -263,3 +263,13 @@ need chunked/resumable upload (not implemented in this prototype).
    no DWG fixtures can be made from the reference data; future DWG
    regression tests need a real AutoCAD-produced DWG (e.g. a surveyor's
    actual file) or the bundled samples.
+
+## 8. Follow-up — sandbox clean-room test (2026-11-26, SANDBOX-TEST.md)
+
+A fresh E2B sandbox install following the Dockerfile exactly exposed
+that the Dockerfile's `debian:bookworm-slim` base ships **GDAL 3.6.2**,
+which breaks the service: `/probe` fails entirely (`ogrinfo -json`
+needs GDAL ≥ 3.7) and the label JOIN fails (`no such column: l.Text` —
+NIB mapping from TEXT labels dead). The Dockerfile base was changed
+to `ubuntu:24.04` (GDAL 3.8.4, the version tested on this VM) and
+`make` was capped at `-j2`. Render build is the final validation.
